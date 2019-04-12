@@ -1,0 +1,44 @@
+# sudo apt update -y && sudo apt install -y docker.io && sudo sysctl -w vm.max_map_count=262144 && sudo usermod -aG docker ubuntu && sudo docker run -d --name elkstack -e ES_JAVA_OPTS=\"-Xms352m -Xmx352m\" --memory=\"512m    \" -p 80:80 -p 443:443 -p 9200:9200 blacktop/elastic-stack
+- hosts: localhost
+  gather_facts: False
+  pre_tasks:
+  - name: "Add hosts:"
+    add_host:
+      name: "{{ my_host }}"
+      groups: to_be_provisioned
+
+- hosts: to_be_provisioned
+  gather_facts: False
+  become: True
+  vars:
+    ansible_ssh_private_key_file: "/home/ubuntu/aws_id_rsa"
+
+  tasks:
+  - name: install python 2
+    raw: test -e /usr/bin/python || (apt -y update && apt install -y python-minimal)
+
+- hosts: to_be_provisioned
+  gather_facts: False
+  become: True
+  vars:
+    ansible_ssh_private_key_file: "/home/ubuntu/aws_id_rsa"
+  tasks:
+  - name: Install prerequisites
+    apt:
+      name: ["docker.io", "python-pip"]
+      update_cache: yes
+
+  - pip:
+      name: ["requests==2.5.3", "docker-py>=1.7.0"]
+
+  - name: Add ubuntu to docker group
+    user:
+      name: ubuntu
+      groups: docker
+      append: yes
+
+  - docker_container:
+      name: logtest
+      image: alpine
+      log_driver: journald
+      command: "/bin/sh -c 'while true; do sleep 2; echo \"now is $(date)\"; done'"
