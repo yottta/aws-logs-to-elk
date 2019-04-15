@@ -23,9 +23,8 @@
   - docker_container:
       name: elkstack
       image: blacktop/elastic-stack
-      user: ubuntu
       env:
-        ES_JAVA_OPTS: "-Xms352m -Xmx352m"
+        ES_JAVA_OPTS: "-Xms512m -Xmx512m"
       memory: 512M
       ports:
         - 80:80

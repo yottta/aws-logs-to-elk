@@ -169,7 +169,7 @@ resource "aws_security_group" "private_sg" {
 ####### INSTANCES ########
 resource "aws_instance" "elk_instance" {
   ami                    = "${lookup(var.amis, var.region)}"
-  instance_type          = "${var.default_instance_type}"
+  instance_type          = "${var.small_instance_type}"
   key_name 	         = "${aws_key_pair.provisioner_key.key_name}"
   vpc_security_group_ids = [ "${aws_security_group.public_sg.id}", "${module.vpc.default_security_group_id}" ]
   subnet_id              = "${module.vpc.public_subnets[0]}"
@@ -255,65 +255,8 @@ resource "null_resource" "provisioning_instances" {
     inline = [
       "chmod 600 /home/ubuntu/aws_id_rsa",
       "sudo apt-add-repository -y ppa:ansible/ansible && sudo apt update -y && sudo apt install -y ansible",
-#      "ansible-playbook --connection=local --become --inventory localhost, /home/ubuntu/ansible/setup_ek.yaml",
-      "ansible-playbook --extra-vars \"my_host=${aws_instance.app_instance.private_ip}\" --inventory localhost, /home/ubuntu/ansible/setup_app.yaml"
-#      "sudo apt update -y && sudo apt install -y docker.io && sudo sysctl -w vm.max_map_count=262144 && sudo usermod -aG docker ubuntu && sudo docker run -d --name elkstack -e ES_JAVA_OPTS=\"-Xms352m -Xmx352m\" --memory=\"512m\" -p 80:80 -p 443:443 -p 9200:9200 blacktop/elastic-stack"
-    ]
-  }
-  provisioner "remote-exec" {
-    inline = [
-      "sudo apt update -y",
-      "sudo apt install nginx",
+      "ansible-playbook --connection=local --become --inventory localhost, /home/ubuntu/ansible/setup_ek.yaml",
+      "ansible-playbook --extra-vars \"my_host=${aws_instance.app_instance.private_ip} cloud_watch_log_group=${aws_cloudwatch_log_group.app_journald_logs.name}\" --ssh-common-args='-o StrictHostKeyChecking=no' --inventory localhost, /home/ubuntu/ansible/setup_app.yaml"
     ]
   }
 }
-
-#resource "null_resource" "copy_provisioning_app_instance_script" {
-#  triggers {
-#    public_ip = "${aws_instance.elk_instance.public_ip}"
-#    private_ip = "${aws_instance.app_instance.private_ip}"
-#  }
-#
-#  connection {
-#    type              = "ssh"
-#    user              = "ubuntu"
-#    host	      = "${aws_eip.elk_public_ip.public_ip}"
-#    private_key       = "${file("../keys/aws_id_rsa")}"
-#  }
-#
-#  provisioner "file" {
-#    source = "provision_app_instance.sh"
-#    destination = "/home/ubuntu/provision_app_instance.sh"
-#  }
-#}
-#
-
-#resource "null_resource" "provision_app_instance" {
-#  triggers {
-#    public_ip  = "${aws_instance.elk_instance.public_ip}"
-#    private_ip = "${aws_instance.app_instance.private_ip}"
-#  }
-#
-#  connection {
-#    type              = "ssh"
-#    user              = "ubuntu"
-#    host	      = "${aws_eip.elk_public_ip.public_ip}"
-#    private_key       = "${file("../keys/aws_id_rsa")}"
-#  }
-#
-#  depends_on = [
-#    "null_resource.copy_ssh_key",
-#    "null_resource.copy_provisioning_app_instance_script",
-#    "aws_instance.app_instance"
-#  ]
-#
-#  provisioner "remote-exec" {
-#    inline = [
-#        "chmod 600 aws_id_rsa && ssh -o \"StrictHostKeyChecking no\" -i /home/ubuntu/aws_id_rsa ubuntu@${aws_instance.app_instance.private_ip} 'bash -s' < provision_app_instance.sh"
-#    ]
-#  }
-#}
-#
-
-
-# ansible-playbook --connection=local --inventory 127.0.0.1, main.yml

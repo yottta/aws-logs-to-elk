@@ -11,21 +11,25 @@
   gather_facts: False
   become: True
   vars:
-    ansible_ssh_private_key_file: "/home/ubuntu/aws_id_rsa"
+    ansible_ssh_private_key_file: "{{ lookup('env','HOME') }}/aws_id_rsa"
 
   tasks:
   - name: install python 2
     raw: test -e /usr/bin/python || (apt -y update && apt install -y python-minimal)
 
 - hosts: to_be_provisioned
-  gather_facts: False
   become: True
   vars:
-    ansible_ssh_private_key_file: "/home/ubuntu/aws_id_rsa"
+    ansible_ssh_private_key_file: "{{ lookup('env','HOME') }}/aws_id_rsa"
+    journald_forwarder_url: "https://github.com/saymedia/journald-cloudwatch-logs/releases/download/v0.0.1/journald-cloudwatch-logs-linux.zip"
+    temp_dir: "{{ lookup('env','HOME') }}/temp"
+    journald_forwarder_conf_file: "journald_forwarder.conf"
+    journald_forwarder_unit_file: "journald_forwarder.service"
+    journald_forwarder_state_dir: "/var/lib/journald-cloudwatch-logs"
   tasks:
   - name: Install prerequisites
     apt:
-      name: ["docker.io", "python-pip"]
+      name: ["docker.io", "python-pip", "unzip"]
       update_cache: yes
 
   - pip:
@@ -37,8 +41,42 @@
       groups: docker
       append: yes
 
+  - file:
+      path: "{{ temp_dir }}"
+      state: directory
+
+  - file:
+      path: "{{ journald_forwarder_state_dir }}"
+      state: directory
+
+  - unarchive:
+      src: "{{ journald_forwarder_url }}"
+      dest: "{{ temp_dir }}"
+      copy: no
+
+  - name: Move journald forwarder binary
+    copy:
+      remote_src: True
+      src: "{{ temp_dir }}/journald-cloudwatch-logs/journald-cloudwatch-logs"
+      dest: "/usr/local/bin/journald-cloudwatch-logs"
+      mode: a+x
+
+  - template:
+      src: "{{ journald_forwarder_conf_file }}.j2"
+      dest: "/usr/local/etc/{{ journald_forwarder_conf_file }}"
+
+  - template:
+      src: "{{ journald_forwarder_unit_file }}.j2"
+      dest: "/etc/systemd/system/{{ journald_forwarder_unit_file }}"
+
+  - name: enable journald forwarder
+    systemd:
+      name: journald_forwarder
+      state: started
+      enabled: yes
+
   - docker_container:
       name: logtest
       image: alpine
       log_driver: journald
-      command: "/bin/sh -c 'while true; do sleep 2; echo \"now is $(date)\"; done'"
+      command: "/bin/sh -c 'while true; do sleep 20; echo \"now is $(date)\"; done'"
