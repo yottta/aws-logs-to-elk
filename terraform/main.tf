@@ -3,22 +3,19 @@ provider "aws" {
   secret_key = "${var.aws_secret_key}"
   region     = "${var.region}"
 }
+data "aws_caller_identity" "current" { }
 
 ###################################################
 ###### KEY PAIRS ######
 resource "aws_key_pair" "provisioner_key" {
   key_name   = "aws_id_rsa"
-  public_key = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDJ0HDUFW7bc7tyAhTmm9n1dxOQD2B4ANHQIqIgxVh9YBjTUERn99jF6vxrw8yKFDe4rGF3Ghp1ATRbL8Fx6dTNGZ3jfNXMaygxp1/F+3Kmp2lyKYPvKvd1A+XI4pPRVH2zJGpnY0wgTcJocgMlNwI8UNm5ZX/f/SzDbYvfgSW0QrDqpiBM1LyEr06OCBpRAQyntkupuRgJZ4PtQF/aFYD8q1bCoNfEaylFJIkh1FSM6QOKTMOM+LiGGAvHUrwn+x2soZbGoxgWF0RGog/rPL55P5mk5l8tO6JqL3pxORhrtHJZ4Dsq3hcavqaHk8gLH7KZB8Q64IpIOAkJGDxnyneB andrei.ciobanu@bv030635mc"
+  public_key = "${file("../keys/aws_id_rsa.pub")}"
 }
-
-## need IAM role for journald script, needs to download the journald crawler and add the conf file 
-## config file |
-##log_group = "app_journald"
-##state_file = "/home/ubuntu/journald-cloudwatch-logs/state"
-## create log group in cloudwatch (DONE)
 
 ###################################################
 ####### IAM ########
+
+# roles and policies needed to allow to the app stored on ec2 to write logs to cw
 resource "aws_iam_policy" "cloud_watch_logs_policy" {
   name        = "cloud_watch_logs_policy"
   path        = "/"
@@ -75,11 +72,74 @@ resource "aws_iam_instance_profile" "cw_iam_instance_profile" {
   role = "${aws_iam_role.allow_ec2_write_logs_to_cw.name}"
 }
 
+# lambda needed roles and policies
+resource "aws_iam_policy" "lambda_forward_cw_to_elk_policy" {
+  name        = "lambda_forward_cw_to_elk_policy"
+  path        = "/"
+  description = "Policy needed for lambda to be able to write its own logs to CW"
+
+  policy = <<EOF
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": "logs:CreateLogGroup",
+            "Resource": "arn:aws:logs:${var.region}:${data.aws_caller_identity.current.account_id}:*"
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "logs:CreateLogStream",
+                "logs:PutLogEvents"
+            ],
+            "Resource": [
+                "arn:aws:logs:${var.region}:${data.aws_caller_identity.current.account_id}:log-group:${aws_cloudwatch_log_group.lambda_cw_to_elk_logs.name}:*"
+            ]
+        }
+    ]
+}
+EOF
+}
+
+resource "aws_iam_role" "lambda_forward_cw_to_elk_role" {
+  name = "lambda_forward_cw_to_elk_role"
+
+  description = "Role that is used for by lambda to be able to write its own logs to CW"
+  path        = "/service-role/"
+  assume_role_policy = <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "lambda.amazonaws.com"
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+EOF
+}
+
+resource "aws_iam_role_policy_attachment" "lambda_forward_cw_to_elk_policy_attach_to_role" {
+  role       = "${aws_iam_role.lambda_forward_cw_to_elk_role.name}"
+  policy_arn = "${aws_iam_policy.lambda_forward_cw_to_elk_policy.arn}"
+}
+
 ####################################################
 ######## CLOUD WATCH LOGS ########
 resource "aws_cloudwatch_log_group" "app_journald_logs" {
-  name = "app_journald_logs"
+  name              = "app_journald_logs"
+  retention_in_days = 14
 }
+
+resource "aws_cloudwatch_log_group" "lambda_cw_to_elk_logs" {
+  name              = "/aws/lambda/${aws_lambda_function.forward_cw_to_elk.function_name}"
+  retention_in_days = 14
+}
+
 
 ####################################################
 ######## NETWORKING ########
@@ -120,6 +180,24 @@ resource "aws_security_group_rule" "allow_ssh" {
   type              = "ingress"
   from_port         = 22
   to_port           = 22
+  protocol          = "tcp"
+  security_group_id = "${aws_security_group.public_sg.id}"
+  cidr_blocks       = ["0.0.0.0/0"]
+}
+
+resource "aws_security_group_rule" "allow_kibana_access" {
+  type              = "ingress"
+  from_port         = 5601
+  to_port           = 5601
+  protocol          = "tcp"
+  security_group_id = "${aws_security_group.public_sg.id}"
+  cidr_blocks       = ["0.0.0.0/0"]
+}
+
+resource "aws_security_group_rule" "allow_es_access" {
+  type              = "ingress"
+  from_port         = 9200
+  to_port           = 9200
   protocol          = "tcp"
   security_group_id = "${aws_security_group.public_sg.id}"
   cidr_blocks       = ["0.0.0.0/0"]
@@ -190,10 +268,45 @@ resource "aws_eip" "elk_public_ip" {
 }
 
 ####################################################
+####### LAMBDA ######
+resource "aws_lambda_function" "forward_cw_to_elk" {
+  filename         = "${var.lambda_app_zip_file_path}"
+  function_name    = "forward_cw_to_elk"
+  role             = "${aws_iam_role.lambda_forward_cw_to_elk_role.arn}"
+  handler          = "forwarder"
+  source_code_hash = "${filebase64sha256(var.lambda_app_zip_file_path)}"
+  runtime          = "go1.x"
+  
+  environment {
+    variables = {
+      ES_HOST  = "http://${aws_eip.elk_public_ip.public_dns}"
+      ES_PORT  = 9200
+      ES_INDEX = "logs"
+    }
+  }
+}
+
+resource "aws_lambda_permission" "allow_cw_to_call_forward_to_elk_lambda" {
+  statement_id  = "AllowExecutionFromCloudWatch"
+  action        = "lambda:InvokeFunction"
+  function_name = "${aws_lambda_function.forward_cw_to_elk.function_name}"
+  principal     = "logs.${var.region}.amazonaws.com"
+  source_arn    = "${aws_cloudwatch_log_group.app_journald_logs.arn}"
+}
+
+resource "aws_cloudwatch_log_subscription_filter" "subscription_app_logs_to_lambda" {
+  name            = "subscription_app_logs_to_lambda"
+  filter_pattern  = ""
+  log_group_name  = "app_journald_logs"
+  destination_arn = "${aws_lambda_function.forward_cw_to_elk.arn}"
+}
+
+####################################################
 ####### PROVISONING ######
 resource "null_resource" "copy_ssh_key" {
   triggers {
-    public_ip = "${aws_instance.elk_instance.public_ip}"
+    elk_instanceId = "${aws_instance.elk_instance.id}"
+    app_instanceId = "${aws_instance.app_instance.id}"
   }
   depends_on = [
     "aws_instance.elk_instance"
@@ -214,7 +327,8 @@ resource "null_resource" "copy_ssh_key" {
 
 resource "null_resource" "copy_ansible_playbooks" {
   triggers {
-    public_ip = "${aws_instance.elk_instance.public_ip}"
+    elk_instanceId = "${aws_instance.elk_instance.id}"
+    app_instanceId = "${aws_instance.app_instance.id}"
   }
   depends_on = [
     "aws_instance.elk_instance"
@@ -235,7 +349,8 @@ resource "null_resource" "copy_ansible_playbooks" {
 
 resource "null_resource" "provisioning_instances" {
   triggers {
-    public_ip = "${aws_instance.elk_instance.public_ip}"
+    elk_instanceId = "${aws_instance.elk_instance.id}"
+    app_instanceId = "${aws_instance.app_instance.id}"
   }
   depends_on = [
     "null_resource.copy_ssh_key",

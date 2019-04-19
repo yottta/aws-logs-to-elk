@@ -7,7 +7,7 @@
       update_cache: yes
 
   - pip:
-      name: ["requests==2.5.3", "docker-py>=1.7.0"]
+      name: ["requests==2.5.3", "docker-compose>=1.7.0"]
 
   - name: Add ubuntu to docker group
     user:
@@ -20,14 +20,14 @@
       value: 262144
       state: present
 
-  - docker_container:
-      name: elkstack
-      image: blacktop/elastic-stack
-      env:
-        ES_JAVA_OPTS: "-Xms512m -Xmx512m"
-      memory: 512M
-      ports:
-        - 80:80
-        - 443:443
-        - 9200:9200
+  - git:
+      repo: "https://github.com/vkobel/docker-elasticsearch-kibana"
+      dest: "{{ lookup('env','HOME') }}/docker-elasticsearch-kibana"
 
+  - docker_service:
+      project_src: "{{ lookup('env','HOME') }}/docker-elasticsearch-kibana"
+      state: absent
+
+  - docker_service:
+      project_src: "{{ lookup('env','HOME') }}/docker-elasticsearch-kibana"
+      state: present

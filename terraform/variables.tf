@@ -1,5 +1,6 @@
 variable "aws_access_key" {}
 variable "aws_secret_key" {}
+variable "lambda_app_zip_file_path" {}
 
 variable "default_instance_type" {
   default = "t2.micro"
