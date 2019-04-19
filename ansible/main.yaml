@@ -32,6 +32,7 @@
     when: final_stack_state == "present"
 
   - command: "terraform init"
+    args:
       chdir: "{{ terraform_project_path }}"
     register: terraform_init_output
 
