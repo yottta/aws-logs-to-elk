@@ -11,7 +11,7 @@
     file:
       path: "{{ lambda_app_dir }}"
       state: directory
-    when: stack_state == "present"
+    when: final_stack_state == "present"
 
   - name: "Build the lambda application"
     docker_container:
@@ -23,17 +23,17 @@
       command: "/bin/bash -c \"git clone https://github.com/andreic92/aws-lambda-to-elk && cd aws-lambda-to-elk && go build -o /var/host_dir/{{ lambda_app_binary }} && ls -lah .\""
       volumes:
         - "{{ lambda_app_dir }}:/var/host_dir"
-    when: stack_state == "present"
+    when: final_stack_state == "present"
 
   - archive:
       path: "{{ lambda_app_dir }}/{{ lambda_app_binary }}"
       dest: "{{ lambda_app_dir }}/app.zip"
       format: zip
-    when: stack_state == "present"
+    when: final_stack_state == "present"
 
   - terraform:
       project_path: "{{ terraform_project_path }}"
-      state: "{{ stack_state | default('present') }}"
+      state: "{{ final_stack_state }}"
       variables:
         lambda_app_zip_file_path: "{{ lambda_app_dir }}/app.zip"
       variables_file: "{{ terraform_project_path }}/secret.tfvars"
