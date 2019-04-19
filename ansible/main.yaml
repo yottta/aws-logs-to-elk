@@ -31,6 +31,13 @@
       format: zip
     when: final_stack_state == "present"
 
+  - command: "terraform init"
+      chdir: "{{ terraform_project_path }}"
+    register: terraform_init_output
+
+  - debug:
+      msg: "{{ terraform_init_output.stdout }}"
+
   - terraform:
       project_path: "{{ terraform_project_path }}"
       state: "{{ final_stack_state }}"
