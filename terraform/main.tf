@@ -73,35 +73,6 @@ resource "aws_iam_instance_profile" "cw_iam_instance_profile" {
 }
 
 # lambda needed roles and policies
-resource "aws_iam_policy" "lambda_forward_cw_to_elk_policy" {
-  name        = "lambda_forward_cw_to_elk_policy"
-  path        = "/"
-  description = "Policy needed for lambda to be able to write its own logs to CW"
-
-  policy = <<EOF
-{
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Effect": "Allow",
-            "Action": "logs:CreateLogGroup",
-            "Resource": "arn:aws:logs:${var.region}:${data.aws_caller_identity.current.account_id}:*"
-        },
-        {
-            "Effect": "Allow",
-            "Action": [
-                "logs:CreateLogStream",
-                "logs:PutLogEvents"
-            ],
-            "Resource": [
-                "arn:aws:logs:${var.region}:${data.aws_caller_identity.current.account_id}:log-group:${aws_cloudwatch_log_group.lambda_cw_to_elk_logs.name}:*"
-            ]
-        }
-    ]
-}
-EOF
-}
-
 resource "aws_iam_role" "lambda_forward_cw_to_elk_role" {
   name = "lambda_forward_cw_to_elk_role"
 
@@ -117,6 +88,13 @@ resource "aws_iam_role" "lambda_forward_cw_to_elk_role" {
         "Service": "lambda.amazonaws.com"
       },
       "Action": "sts:AssumeRole"
+    },
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "ec2.amazonaws.com"
+      },
+      "Action": "sts:AssumeRole"
     }
   ]
 }
@@ -125,7 +103,7 @@ EOF
 
 resource "aws_iam_role_policy_attachment" "lambda_forward_cw_to_elk_policy_attach_to_role" {
   role       = "${aws_iam_role.lambda_forward_cw_to_elk_role.name}"
-  policy_arn = "${aws_iam_policy.lambda_forward_cw_to_elk_policy.arn}"
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
 }
 
 ####################################################
@@ -170,10 +148,29 @@ module "vpc" {
   }
 }
 
+resource "aws_security_group" "lambda_sg" {
+  name        = "lambda_sg"
+  description = "Control access for the lambda function"
+  vpc_id      = "${module.vpc.vpc_id}"
+}
+
 resource "aws_security_group" "public_sg" {
   name        = "public_sg"
   description = "Allow access to the public resources"
   vpc_id      = "${module.vpc.vpc_id}"
+}
+
+resource "aws_security_group" "private_sg" {
+  name        = "private_sg"
+  description = "Allow ssh ingress trafic just from the public_sg"
+  vpc_id      = "${module.vpc.vpc_id}"
+
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    security_groups = [ "${aws_security_group.public_sg.id}" ]
+  }
 }
 
 resource "aws_security_group_rule" "allow_ssh" {
@@ -195,12 +192,12 @@ resource "aws_security_group_rule" "allow_kibana_access" {
 }
 
 resource "aws_security_group_rule" "allow_es_access" {
-  type              = "ingress"
-  from_port         = 9200
-  to_port           = 9200
-  protocol          = "tcp"
-  security_group_id = "${aws_security_group.public_sg.id}"
-  cidr_blocks       = ["0.0.0.0/0"]
+  type                     = "ingress"
+  from_port                = 9200
+  to_port                  = 9200
+  protocol                 = "tcp"
+  security_group_id        = "${aws_security_group.public_sg.id}"
+  source_security_group_id = "${aws_security_group.lambda_sg.id}"
 }
 
 resource "aws_security_group_rule" "allow_http" {
@@ -230,17 +227,13 @@ resource "aws_security_group_rule" "allow_ssh_to_private_sg" {
   source_security_group_id = "${aws_security_group.private_sg.id}"
 }
 
-resource "aws_security_group" "private_sg" {
-  name        = "private_sg"
-  description = "Allow ssh ingress trafic just from the public_sg"
-  vpc_id      = "${module.vpc.vpc_id}"
-
-  ingress {
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    security_groups = [ "${aws_security_group.public_sg.id}" ]
-  }
+resource "aws_security_group_rule" "allow_lambda_to_call_es_port" {
+  type                     = "egress"
+  from_port                = 9200
+  to_port                  = 9200
+  protocol                 = "tcp"
+  security_group_id        = "${aws_security_group.lambda_sg.id}"
+  source_security_group_id = "${aws_security_group.public_sg.id}"
 }
 
 ###################################################
@@ -276,7 +269,12 @@ resource "aws_lambda_function" "forward_cw_to_elk" {
   handler          = "forwarder"
   source_code_hash = "${filebase64sha256(var.lambda_app_zip_file_path)}"
   runtime          = "go1.x"
-  
+
+  vpc_config {
+    subnet_ids = [ "${module.vpc.private_subnets[0]}" ]
+    security_group_ids = [ "${aws_security_group.lambda_sg.id}" ]
+  }
+
   environment {
     variables = {
       ES_HOST  = "http://${aws_eip.elk_public_ip.public_dns}"
