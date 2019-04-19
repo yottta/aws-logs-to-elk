@@ -50,3 +50,6 @@ In `ansible/` you have to execute the following command: `ansible-playbook --con
 
 ### Destroy
 In `ansible/` you have to execute the following command: `ansible-playbook --connection=local --inventory localhost, --extra-vars "stack_state=absent" main.yaml`
+
+### Navigate the results
+After several minutes, you can get the public_dns from the public EC2 instance and putting it in a browser and accessing 5601 port (Kibana) you should see it loading. Also put in the index filtering just `logs` and save it. You should see the logs now.
