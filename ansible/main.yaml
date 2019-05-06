@@ -20,7 +20,7 @@
       working_dir: /
       auto_remove: True
       detach: False
-      command: "/bin/bash -c \"git clone https://github.com/andreic92/aws-lambda-to-elk && cd aws-lambda-to-elk && go build -o /var/host_dir/{{ lambda_app_binary }} && ls -lah .\""
+      command: "/bin/bash -c \"git clone https://github.com/yottta/aws-lambda-to-elk && cd aws-lambda-to-elk && go build -o /var/host_dir/{{ lambda_app_binary }} && ls -lah .\""
       volumes:
         - "{{ lambda_app_dir }}:/var/host_dir"
     when: final_stack_state == "present"

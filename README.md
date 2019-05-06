@@ -29,7 +29,7 @@ Three playbooks needed in three different scenarios:
 ## Dependencies
 This whole repo used other repos. If you encounter issues, you can check those as well:
 * https://github.com/saymedia/journald-cloudwatch-logs - used to forward journald logs to CW
-* https://github.com/andreic92/aws-lambda-to-elk - this is the source code for Lambda function
+* https://github.com/yottta/aws-lambda-to-elk - this is the source code for Lambda function
 
 ## How do you execute this
 
